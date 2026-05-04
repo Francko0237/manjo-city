@@ -220,9 +220,10 @@ const Feed = () => {
     if (data) setProfile(data);
   };
 
+  const FETCH_POSTS_MS = 25000;
+
   const fetchPosts = async () => {
-    try {
-      let { data, error } = await supabase
+    const postsQuery = supabase
         .from('posts')
         .select(`
           *,
@@ -232,6 +233,14 @@ const Feed = () => {
           shared_post:shared_from_post_id ( id, content, image_url, created_at, profiles ( username, full_name, avatar_url ) )
         `)
         .order('created_at', { ascending: false });
+
+    try {
+      let { data, error } = await Promise.race([
+        postsQuery,
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('posts_fetch_timeout')), FETCH_POSTS_MS)
+        ),
+      ]);
       
       // Fallback 2 : sans shared_post
       if (error) {

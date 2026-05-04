@@ -72,8 +72,9 @@ const Auth = () => {
   };
 
   return (
-    <div className="container" style={{ minHeight: '80vh', display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: '60px' }}>
-      <div className="glass-card" style={{ width: '100%', maxWidth: '400px', padding: '2rem' }}>
+    <div className="main-content-wrapper auth-page">
+      <div className="container auth-page-inner">
+        <div className="glass-card auth-glass-card" style={{ width: '100%', maxWidth: '400px', padding: '2rem' }}>
         <h2 className="text-center mb-2" style={{ color: 'var(--color-primary)' }}>
           {isLogin ? 'Connexion' : 'Créer un compte'}
         </h2>
@@ -169,6 +170,7 @@ const Auth = () => {
             {isLogin ? "S'inscrire" : "Se connecter"}
           </button>
         </div>
+      </div>
       </div>
     </div>
   );

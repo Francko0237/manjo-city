@@ -175,6 +175,39 @@ img {
   padding: 2rem;
 }
 
+/* Auth : même décalage mobile que le reste du site + fond lisible sans backdrop-filter (souvent buggé sur Android) */
+.auth-page-inner {
+  min-height: calc(100vh - 116px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-top: 1rem;
+  padding-bottom: 2rem;
+}
+
+@media (min-width: 1025px) {
+  .auth-page-inner {
+    min-height: 80vh;
+    padding-top: 2rem;
+  }
+}
+
+.auth-glass-card {
+  background: rgba(255, 255, 255, 0.97);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: 0 8px 32px rgba(31, 38, 135, 0.12);
+}
+
+@media (min-width: 1025px) {
+  .auth-glass-card {
+    background: var(--glass-bg);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    box-shadow: var(--glass-shadow);
+  }
+}
+
 .hero-section {
   position: relative;
   width: 100%;
