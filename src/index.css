@@ -34,6 +34,10 @@
   box-sizing: border-box;
 }
 
+html {
+  background-color: var(--color-bg);
+}
+
 body {
   font-family: var(--font-body);
   background-color: var(--color-bg);
@@ -42,6 +46,13 @@ body {
   overflow-x: hidden;
   word-wrap: break-word;
   overflow-wrap: break-word;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#root {
+  min-height: 100vh;
+  min-height: 100dvh;
+  background-color: var(--color-bg);
 }
 
 h1,
@@ -178,6 +189,7 @@ img {
 /* Auth : même décalage mobile que le reste du site + fond lisible sans backdrop-filter (souvent buggé sur Android) */
 .auth-page-inner {
   min-height: calc(100vh - 116px);
+  min-height: calc(100dvh - 116px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -213,6 +225,7 @@ img {
   width: 100%;
   overflow: hidden;
   height: 100vh;
+  height: 100dvh;
   background-image: url('/images/mairie_manjo.jpg');
   background-size: cover;
   background-position: center 20%;
@@ -319,6 +332,7 @@ img {
 /* Layout Global Responsive */
 .main-content-wrapper {
   min-height: 100vh;
+  min-height: 100dvh;
   background: var(--color-bg);
 }
 
@@ -346,9 +360,8 @@ img {
     left: 0;
     width: 100%;
     z-index: 1000;
-    background: rgba(255, 255, 255, 0.95);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
+    /* Fond opaque : le blur (backdrop-filter) provoque souvent des écrans blancs / couches GPU cassées sur Android */
+    background: #ffffff;
     border-bottom: 1px solid rgba(0, 0, 0, 0.06);
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
   }
@@ -635,5 +648,64 @@ img {
 
   to {
     width: 100%;
+  }
+}
+
+/*
+ * Chrome Android : backdrop-filter + 100vh + background-attachment:fixed
+ * peuvent provoquer des pages blanches ou des calques invisibles après navigation / retour arrière-plan.
+ */
+@media (max-width: 1024px) {
+  .hero-section {
+    background-attachment: scroll !important;
+  }
+
+  .glass-card:not(.auth-glass-card) {
+    background: rgba(255, 255, 255, 0.97) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+
+  .hero-glass,
+  .info-hero-glass {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    background: rgba(25, 35, 22, 0.72) !important;
+  }
+
+  .cta-glass {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    background: rgba(255, 255, 255, 0.22) !important;
+  }
+
+  .btn-back-hero {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    background: rgba(0, 0, 0, 0.5) !important;
+  }
+
+  .modal-overlay {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+
+  .event-card-type-badge {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+
+  .chat-container {
+    height: calc(100dvh - 116px) !important;
+  }
+
+  .feed-sidebar-left,
+  .feed-sidebar-right {
+    height: calc(100dvh - 80px);
+  }
+
+  .mobile-nav-backdrop {
+    height: calc(100vh - 116px);
+    height: calc(100dvh - 116px);
   }
 }

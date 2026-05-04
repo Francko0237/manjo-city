@@ -73,9 +73,10 @@ const Navbar = () => {
       {isOpen && (
         <>
           <div
+            className="mobile-nav-backdrop"
             onClick={() => setIsOpen(false)}
             style={{
-              position: 'fixed', top: '116px', left: 0, width: '100%', height: 'calc(100vh - 116px)',
+              position: 'fixed', top: '116px', left: 0, width: '100%',
               background: 'rgba(0,0,0,0.5)', zIndex: 998
             }}
           />
