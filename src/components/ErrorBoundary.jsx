@@ -14,6 +14,13 @@ export class ErrorBoundary extends React.Component {
     console.error('[ManjoCity]', error, info?.componentStack);
   }
 
+  componentDidUpdate(prevProps) {
+    const key = this.props.resetPathname;
+    if (key != null && key !== prevProps.resetPathname && this.state.hasError) {
+      this.setState({ hasError: false, error: null });
+    }
+  }
+
   render() {
     if (this.state.hasError) {
       return (

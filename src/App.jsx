@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, useLocation } from 'react-router-dom';
 import { supabase } from './supabaseClient';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import Navbar from './components/Navbar';
 import Footer from './components/Footer';
 import Feed from './pages/Feed';
@@ -18,26 +19,10 @@ import DevInfo from './pages/DevInfo';
 import Reviews from './pages/Reviews';
 import './index.css';
 
-
-function App() {
-  useEffect(() => {
-    const trackVisit = async () => {
-      // On vérifie si on a déjà compté cette session
-      if (!sessionStorage.getItem('manjo_visit_tracked')) {
-        try {
-          await supabase.from('site_visits').insert([{}]);
-          sessionStorage.setItem('manjo_visit_tracked', 'true');
-        } catch (error) {
-          console.error("Erreur de suivi des visiteurs:", error);
-        }
-      }
-    };
-    
-    trackVisit();
-  }, []);
-
+function AppRoutes() {
+  const location = useLocation();
   return (
-    <Router>
+    <ErrorBoundary resetPathname={location.pathname}>
       <div className="App">
         <Navbar />
         <main>
@@ -59,6 +44,30 @@ function App() {
         </main>
         <Footer />
       </div>
+    </ErrorBoundary>
+  );
+}
+
+function App() {
+  useEffect(() => {
+    const trackVisit = async () => {
+      // On vérifie si on a déjà compté cette session
+      if (!sessionStorage.getItem('manjo_visit_tracked')) {
+        try {
+          await supabase.from('site_visits').insert([{}]);
+          sessionStorage.setItem('manjo_visit_tracked', 'true');
+        } catch (error) {
+          console.error("Erreur de suivi des visiteurs:", error);
+        }
+      }
+    };
+    
+    trackVisit();
+  }, []);
+
+  return (
+    <Router>
+      <AppRoutes />
     </Router>
   );
 }

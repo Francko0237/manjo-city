@@ -186,6 +186,17 @@ img {
   padding: 2rem;
 }
 
+/* Infos ville : carte « Bienvenue à Manjo » — le .glass-card global ne doit pas écraser le glass du hero (home.css) */
+.info-hero .glass-card.info-hero-glass {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  color: var(--color-white);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+  padding: 3rem;
+}
+
 /* Auth : même décalage mobile que le reste du site + fond lisible sans backdrop-filter (souvent buggé sur Android) */
 .auth-page-inner {
   min-height: calc(100vh - 116px);
@@ -660,23 +671,20 @@ img {
     background-attachment: scroll !important;
   }
 
-  .glass-card:not(.auth-glass-card) {
+  /*
+   * Cartes feed / profil / etc. : fond opaque sans blur.
+   * Exclut la page Infos ville : hero, frise, services, CTA (home.css).
+   */
+  .glass-card:not(.auth-glass-card):not(.info-hero-glass):not(.cta-glass):not(.timeline-content):not(.service-card) {
     background: rgba(255, 255, 255, 0.97) !important;
     backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;
   }
 
-  .hero-glass,
-  .info-hero-glass {
+  .hero-glass {
     backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;
     background: rgba(25, 35, 22, 0.72) !important;
-  }
-
-  .cta-glass {
-    backdrop-filter: none !important;
-    -webkit-backdrop-filter: none !important;
-    background: rgba(255, 255, 255, 0.22) !important;
   }
 
   .btn-back-hero {
@@ -707,5 +715,11 @@ img {
   .mobile-nav-backdrop {
     height: calc(100vh - 116px);
     height: calc(100dvh - 116px);
+  }
+
+  .info-hero .glass-card.info-hero-glass {
+    padding: 1.5rem;
+    border-radius: 16px;
+    width: 100%;
   }
 }

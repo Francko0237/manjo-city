@@ -265,19 +265,18 @@ const Chat = () => {
     activeChatRef.current = activeChat;
   }, [activeChat]);
 
+  // pagehide : sauvegarde au vrai départ (F5, fermeture d'onglet) sans beforeunload
+  // (beforeunload peut casser le cache arrière / bfcache sur mobile et provoquer rechargements bizarres)
   useEffect(() => {
-    const handleBeforeUnload = () => {
-      // Sauvegarder uniquement lors d'un vrai rechargement (F5) ou fermeture d'onglet
+    const handlePageHide = () => {
       if (activeChatRef.current) {
         sessionStorage.setItem('manjo_restore_chat', JSON.stringify(activeChatRef.current));
       }
     };
-    window.addEventListener('beforeunload', handleBeforeUnload);
+    window.addEventListener('pagehide', handlePageHide);
 
-    // Ce cleanup s'exécute quand on quitte la page via une navigation SPA (ex: Navbar)
-    // On efface la sauvegarde pour repartir de la liste au prochain retour
     return () => {
-      window.removeEventListener('beforeunload', handleBeforeUnload);
+      window.removeEventListener('pagehide', handlePageHide);
       sessionStorage.removeItem('manjo_restore_chat');
     };
   }, []);
