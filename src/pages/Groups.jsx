@@ -129,7 +129,7 @@ const Groups = () => {
   };
 
   const goToChat = (groupId) => {
-    navigate('/chat', { state: { selectedGroupId: groupId } });
+    navigate(`/chat/group/${groupId}`);
   };
 
   return (

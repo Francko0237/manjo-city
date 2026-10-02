@@ -41,7 +41,7 @@ const UsersList = () => {
       navigate('/auth');
       return;
     }
-    navigate('/chat', { state: { selectedUser: user } });
+    navigate(`/chat/user/${user.id}`);
   };
 
   return (

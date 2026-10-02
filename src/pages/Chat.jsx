@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from '../supabaseClient';
-import { Send, Users, User, ArrowLeft, Search, Check, CheckCheck, MessageCircle, Paperclip, X, Info } from 'lucide-react';
-import { useNavigate, useLocation, Link } from 'react-router-dom';
+import { Send, Users, User, ArrowLeft, Search, Check, CheckCheck, MessageCircle, Paperclip, X, Info, Phone } from 'lucide-react';
+import { useNavigate, useLocation, useParams, Link } from 'react-router-dom';
 import LeftSidebar from '../components/LeftSidebar';
+import { useVoiceCall } from '../context/VoiceCallContext';
 
 // ── Composant coches de statut WhatsApp ──
 const MessageTicks = ({ isMe, isRead, isDelivered }) => {
@@ -248,10 +249,14 @@ const Chat = () => {
   const [reactionHoverMsg, setReactionHoverMsg] = useState(null);
   // Toasts WhatsApp-style
   const [toasts, setToasts] = useState([]);
+  // Messages en échec d'envoi
+  const [failedMessages, setFailedMessages] = useState(new Set());
   const fileInputRef = useRef(null);
   const messagesContainerRef = useRef(null);
   const navigate = useNavigate();
   const location = useLocation();
+  const { userId, groupId } = useParams();
+  const { startCall } = useVoiceCall();
 
   const addToast = useCallback((toast) => {
     const id = Date.now();
@@ -365,8 +370,7 @@ const Chat = () => {
   const selectChat = (type, data) => {
     setActiveChat({ type, data });
     fetchMessages(type, data.id);
-    // Persister dans localStorage pour la restauration au rechargement
-    localStorage.setItem('manjo_active_chat', JSON.stringify({ type, data }));
+    navigate(`/chat/${type}/${data.id}`);
     
     // Clear unread counts for this chat
     setUnreadCounts(prev => ({
@@ -384,12 +388,65 @@ const Chat = () => {
     }
   };
 
-  // Quand session est chargée et qu'un chat était sauvegardé, charger les messages
+  // Synchronisation avec les paramètres d'URL (ex: /chat/user/:userId ou /chat/group/:groupId)
   useEffect(() => {
-    if (session && activeChat && messages.length === 0) {
-      fetchMessages(activeChat.type, activeChat.data.id);
+    if (!session) return;
+
+    if (userId) {
+      if (activeChat?.type === 'user' && activeChat?.data?.id === userId) return;
+      const existingUser = users.find(u => u.id === userId);
+      if (existingUser) {
+        setActiveChat({ type: 'user', data: existingUser });
+        fetchMessages('user', userId);
+      } else {
+        supabase
+          .from('profiles')
+          .select('id, username, full_name, avatar_url, bio')
+          .eq('id', userId)
+          .maybeSingle()
+          .then(({ data }) => {
+            if (data) {
+              setActiveChat({ type: 'user', data });
+              fetchMessages('user', userId);
+              setUsers(prev => prev.some(u => u.id === data.id) ? prev : [data, ...prev]);
+            }
+          });
+      }
+    } else if (groupId) {
+      if (activeChat?.type === 'group' && activeChat?.data?.id === groupId) return;
+      const existingGroup = groups.find(g => g.id === groupId);
+      if (existingGroup) {
+        setActiveChat({ type: 'group', data: existingGroup });
+        fetchMessages('group', groupId);
+      } else {
+        supabase
+          .from('groups')
+          .select('id, name, description, cover_url')
+          .eq('id', groupId)
+          .maybeSingle()
+          .then(({ data }) => {
+            if (data) {
+              setActiveChat({ type: 'group', data });
+              fetchMessages('group', groupId);
+              setGroups(prev => prev.some(g => g.id === data.id) ? prev : [data, ...prev]);
+            }
+          });
+      }
+    } else {
+      if (!location.state?.selectedUser && !location.state?.selectedGroup) {
+        setActiveChat(null);
+      }
     }
-  }, [session, activeChat?.data?.id]);
+  }, [userId, groupId, session, users.length, groups.length]);
+
+  // Support de location.state pour redirection immédiate vers l'URL dédiée
+  useEffect(() => {
+    if (location.state?.selectedUser?.id) {
+      navigate(`/chat/user/${location.state.selectedUser.id}`, { replace: true });
+    } else if (location.state?.selectedGroup?.id) {
+      navigate(`/chat/group/${location.state.selectedGroup.id}`, { replace: true });
+    }
+  }, [location.state]);
 
 
   const fetchMessages = async (type, id) => {
@@ -410,7 +467,7 @@ const Chat = () => {
         .order('created_at', { ascending: true });
       if (data) setMessages(data);
     }
-    scrollToBottom();
+    // scrollToBottom() est géré par useEffect([messages]) — pas besoin ici
   };
 
   useEffect(() => {
@@ -527,6 +584,15 @@ const Chat = () => {
     }
   }, [location.state, groups]);
 
+  // ── Helper : insérer un message reçu directement dans le state (évite double requête) ──
+  const addIncomingMessage = useCallback((msg) => {
+    setMessages(prev => {
+      // Éviter les doublons (idempotent)
+      if (prev.find(m => m.id === msg.id)) return prev;
+      return [...prev, msg];
+    });
+  }, []);
+
   useEffect(() => {
     // Subscribe to new messages FOR ACTIVE CHAT
     if (!session || !activeChat) return;
@@ -543,22 +609,30 @@ const Chat = () => {
             filter: `receiver_id=eq.${session.user.id}`
           }, 
           payload => {
-            if (payload.new.sender_id === activeChat.data.id || payload.new.receiver_id === activeChat.data.id) {
-               fetchMessages('user', activeChat.data.id);
-               supabase.from('messages').update({ is_read: true }).match({ id: payload.new.id }).then();
+            if (payload.new.sender_id === activeChat.data.id) {
+              // Message entrant : on le récupère avec les infos du sender
+              supabase
+                .from('messages')
+                .select('*, sender:profiles!messages_sender_id_fkey(username, avatar_url, full_name)')
+                .eq('id', payload.new.id)
+                .single()
+                .then(({ data }) => {
+                  if (data) {
+                    addIncomingMessage(data);
+                    // Marquer comme lu immédiatement
+                    supabase.from('messages').update({ is_read: true }).match({ id: data.id }).then();
+                  }
+                });
             }
           }
         )
-        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `sender_id=eq.${session.user.id}` }, payload => {
-            if (payload.new.receiver_id === activeChat.data.id) {
-               fetchMessages('user', activeChat.data.id);
-            }
-        })
-        // Temps réel pour les réactions
+        // Temps réel pour les réactions + statuts is_read/is_delivered
         .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages' }, payload => {
-            if (payload.new.reactions !== undefined) {
-              setMessages(prev => prev.map(m => m.id === payload.new.id ? { ...m, reactions: payload.new.reactions } : m));
-            }
+            setMessages(prev => prev.map(m =>
+              m.id === payload.new.id
+                ? { ...m, reactions: payload.new.reactions, is_read: payload.new.is_read, is_delivered: payload.new.is_delivered }
+                : m
+            ));
         })
         .subscribe();
     } else {
@@ -571,14 +645,22 @@ const Chat = () => {
             filter: `group_id=eq.${activeChat.data.id}`
           }, 
           payload => {
-            fetchMessages('group', activeChat.data.id);
+            if (payload.new.user_id !== session.user.id) {
+              // Message d'un autre membre du groupe
+              supabase
+                .from('group_messages')
+                .select('*, sender:profiles!group_messages_user_id_fkey(username, avatar_url, full_name)')
+                .eq('id', payload.new.id)
+                .single()
+                .then(({ data }) => { if (data) addIncomingMessage(data); });
+            }
           }
         )
         // Temps réel pour les réactions de groupe
         .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'group_messages' }, payload => {
-            if (payload.new.reactions !== undefined) {
-              setMessages(prev => prev.map(m => m.id === payload.new.id ? { ...m, reactions: payload.new.reactions } : m));
-            }
+            setMessages(prev => prev.map(m =>
+              m.id === payload.new.id ? { ...m, reactions: payload.new.reactions } : m
+            ));
         })
         .subscribe();
     }
@@ -586,7 +668,7 @@ const Chat = () => {
     return () => {
       if (subscription) supabase.removeChannel(subscription);
     };
-  }, [activeChat, session]);
+  }, [activeChat, session, addIncomingMessage]);
 
   const scrollToBottom = () => {
     if (messagesContainerRef.current) {
@@ -612,7 +694,6 @@ const Chat = () => {
     if (mediaFile) {
        const fileExt = mediaFile.name.split('.').pop();
        const fileName = `${session.user.id}-${Date.now()}.${fileExt}`;
-       // Upload to chat folder in manjo-images bucket
        const { error: uploadError } = await supabase.storage
          .from('manjo-images')
          .upload(`chat/${fileName}`, mediaFile);
@@ -626,45 +707,83 @@ const Chat = () => {
        }
     }
 
-    // construct JSON payload
-    let finalContent = newMessage;
+    let finalContent = newMessage.trim();
     if (mediaUrl) {
-      finalContent = JSON.stringify({
-         text: newMessage,
-         mediaUrl,
-         mediaType
-      });
+      finalContent = JSON.stringify({ text: newMessage.trim(), mediaUrl, mediaType });
     }
 
-    const tempMessage = newMessage;
     const currentReply = replyingToMessage;
-    setNewMessage(''); // optimistic clear
+    setNewMessage('');
     setMediaFile(null);
     setReplyingToMessage(null);
 
+    // ── OPTIMISTIC UI : afficher le message immédiatement ──
+    const tempId = `temp-${Date.now()}`;
+    const optimisticMsg = {
+      id: tempId,
+      sender_id: session.user.id,
+      user_id: session.user.id, // pour les groupes
+      receiver_id: activeChat.type === 'user' ? activeChat.data.id : null,
+      group_id: activeChat.type === 'group' ? activeChat.data.id : null,
+      content: finalContent,
+      reply_to_id: currentReply?.id || null,
+      created_at: new Date().toISOString(),
+      is_read: false,
+      is_delivered: false,
+      reactions: {},
+      _pending: true, // marqueur temporaire
+      sender: {
+        username: session.user.email?.split('@')[0],
+        full_name: session.user.user_metadata?.full_name || '',
+        avatar_url: session.user.user_metadata?.avatar_url || null,
+      }
+    };
+    setMessages(prev => [...prev, optimisticMsg]);
+
     if (activeChat.type === 'user') {
-      const { error } = await supabase.from('messages').insert([{
+      const { data: inserted, error } = await supabase.from('messages').insert([{
         sender_id: session.user.id,
         receiver_id: activeChat.data.id,
         content: finalContent,
         reply_to_id: currentReply?.id || null
-      }]);
+      }]).select('*, sender:profiles!messages_sender_id_fkey(username, avatar_url, full_name)').single();
+
       if (error) {
         console.error("Erreur d'envoi du message:", error);
-      } else {
-        fetchMessages('user', activeChat.data.id);
+        // Supprimer le message optimiste et marquer comme échoué
+        setMessages(prev => prev.filter(m => m.id !== tempId));
+        setFailedMessages(prev => new Set([...prev, tempId]));
+        addToast({
+          senderId: 'error',
+          senderName: '❌ Erreur d\'envoi',
+          avatar: null,
+          preview: 'Votre message n\'a pas pu être envoyé. Vérifiez votre connexion.',
+          isError: true,
+        });
+      } else if (inserted) {
+        // Remplacer le message optimiste par le vrai message
+        setMessages(prev => prev.map(m => m.id === tempId ? inserted : m));
       }
     } else {
-      const { error } = await supabase.from('group_messages').insert([{
+      const { data: inserted, error } = await supabase.from('group_messages').insert([{
         group_id: activeChat.data.id,
         user_id: session.user.id,
         content: finalContent,
         reply_to_id: currentReply?.id || null
-      }]);
+      }]).select('*, sender:profiles!group_messages_user_id_fkey(username, avatar_url, full_name)').single();
+
       if (error) {
         console.error("Erreur d'envoi du message de groupe:", error);
-      } else {
-        fetchMessages('group', activeChat.data.id);
+        setMessages(prev => prev.filter(m => m.id !== tempId));
+        addToast({
+          senderId: 'error',
+          senderName: '❌ Erreur d\'envoi',
+          avatar: null,
+          preview: 'Votre message n\'a pas pu être envoyé. Vérifiez votre connexion.',
+          isError: true,
+        });
+      } else if (inserted) {
+        setMessages(prev => prev.map(m => m.id === tempId ? inserted : m));
       }
     }
     setUploadingMedia(false);
@@ -714,372 +833,427 @@ const Chat = () => {
     );
   }
 
+
   return (
     <>
-      {/* ── TOASTS DE NOTIFICATION WHATSAPP-STYLE ── */}
-      <div style={{ position: 'fixed', top: '20px', left: '50%', transform: 'translateX(-50%)', zIndex: 9999, display: 'flex', flexDirection: 'column', gap: '10px', width: '90%', maxWidth: '400px', pointerEvents: 'none' }}>
+      {/* ── TOASTS ── */}
+      <div style={{ position: 'fixed', top: '72px', left: '50%', transform: 'translateX(-50%)', zIndex: 9999, display: 'flex', flexDirection: 'column', gap: '8px', width: 'min(92vw, 380px)', pointerEvents: 'none' }}>
         {toasts.map(toast => (
-          <div key={toast.id} style={{ background: 'rgba(255, 255, 255, 0.95)', backdropFilter: 'blur(10px)', borderRadius: '12px', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: '12px', boxShadow: '0 8px 30px rgba(0,0,0,0.15)', border: '1px solid rgba(0,0,0,0.05)', animation: 'fadeInDown 0.3s ease forwards', pointerEvents: 'auto', cursor: 'pointer' }} onClick={() => { selectChat(toast.isGroup ? 'group' : 'user', { id: toast.senderId, name: toast.senderName }); }}>
-            {toast.avatar ? (
-              <img src={toast.avatar} alt="" style={{ width: '40px', height: '40px', borderRadius: '50%', objectFit: 'cover' }} />
-            ) : (
-              <div style={{ width: '40px', height: '40px', borderRadius: '8px', background: 'var(--color-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 'bold' }}>{toast.senderName?.charAt(0).toUpperCase()}</div>
-            )}
-            <div style={{ flex: 1, overflow: 'hidden' }}>
-              <div style={{ fontWeight: '600', fontSize: '0.95rem', color: '#050505', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>{toast.senderName}</div>
-              <div style={{ fontSize: '0.85rem', color: '#65676b', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>{toast.preview}</div>
+          <div
+            key={toast.id}
+            onClick={() => { if (!toast.isError) selectChat(toast.isGroup ? 'group' : 'user', { id: toast.senderId, name: toast.senderName }); }}
+            style={{
+              background: toast.isError ? '#ef4444' : 'rgba(255,255,255,0.97)',
+              borderRadius: '14px', padding: '10px 14px',
+              display: 'flex', alignItems: 'center', gap: '10px',
+              boxShadow: '0 4px 20px rgba(0,0,0,0.14)',
+              border: toast.isError ? 'none' : '1px solid rgba(0,0,0,0.06)',
+              animation: 'fadeInDown 0.25s ease',
+              pointerEvents: toast.isError ? 'none' : 'auto',
+              cursor: toast.isError ? 'default' : 'pointer'
+            }}
+          >
+            {toast.isError
+              ? <span style={{ fontSize: '1.2rem' }}>❌</span>
+              : toast.avatar
+                ? <img src={toast.avatar} alt="" style={{ width: 36, height: 36, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
+                : <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'var(--color-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 700, fontSize: '0.9rem', flexShrink: 0 }}>{toast.senderName?.[0]?.toUpperCase()}</div>
+            }
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 600, fontSize: '0.88rem', color: toast.isError ? 'white' : '#111', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{toast.senderName}</div>
+              <div style={{ fontSize: '0.8rem', color: toast.isError ? 'rgba(255,255,255,0.85)' : '#666', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{toast.preview}</div>
             </div>
           </div>
         ))}
       </div>
 
-    <div className="main-content-wrapper">
-      <div className="feed-layout chat-feed-layout" style={{ maxWidth: '1400px' }}>
-        <LeftSidebar />
-        
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+      <div className="main-content-wrapper">
+        <div className="feed-layout chat-feed-layout" style={{ maxWidth: '1400px', padding: 0 }}>
+          <LeftSidebar />
 
-          
-          <div className="chat-container" style={{ height: 'calc(100dvh - 116px)', display: 'flex' }}>
-        
-        {/* ── SIDEBAR (Contacts & Groups) ── */}
-        <div className={`glass-card chat-sidebar ${activeChat ? 'hidden-mobile' : ''}`} style={{ flex: '0 0 300px', display: 'flex', flexDirection: 'column', borderRight: '1px solid #eee', overflow: 'hidden' }}>
-        <div style={{ padding: '1rem', borderBottom: '1px solid #eee' }}>
-          <h2 style={{ fontSize: '1.2rem', margin: 0 }}>Discussions</h2>
-        </div>
-        
-        <div style={{ padding: '0.5rem 1rem', borderBottom: '1px solid #eee' }}>
-          <div style={{ position: 'relative' }}>
-            <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#999' }} />
-            <input 
-              type="text" 
-              placeholder="Rechercher..." 
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              style={{ width: '100%', padding: '0.6rem 1rem 0.6rem 40px', borderRadius: '20px', border: '1px solid #ddd', outline: 'none' }}
-            />
-          </div>
-        </div>
+          {/* ── CHAT LAYOUT ── */}
+          <div style={{ flex: 1, minWidth: 0, display: 'flex', height: 'calc(100dvh - 116px)' }}>
 
-        <div style={{ flex: 1, overflowY: 'auto' }}>
-          {/* Groups Section */}
-          <div style={{ padding: '1rem 1rem 0.5rem', fontSize: '0.8rem', fontWeight: 'bold', color: 'var(--color-text-light)', textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <Users size={14} /> Mes Groupes
-          </div>
-          {loading ? (
-             <div style={{ padding: '0 1rem', fontSize: '0.9rem', color: '#999' }}>Chargement...</div>
-          ) : filteredGroups.length === 0 ? (
-            <div style={{ padding: '0 1rem', fontSize: '0.9rem', color: '#999' }}>Aucun groupe.</div>
-          ) : (
-             filteredGroups.map(group => (
-              <div 
-                key={group.id} 
-                onClick={() => selectChat('group', group)}
-                style={{ 
-                  padding: '0.8rem 1rem', 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  gap: '0.8rem', 
-                  cursor: 'pointer',
-                  position: 'relative',
-                  background: activeChat?.data?.id === group.id ? 'var(--color-bg-alt)' : 'transparent',
-                  borderLeft: activeChat?.data?.id === group.id ? '3px solid var(--color-primary)' : '3px solid transparent'
-                }}
-              >
-                <div style={{ width: '40px', height: '40px', borderRadius: '8px', background: 'var(--color-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 'bold', fontSize: '1.2rem', position: 'relative' }}>
-                  {group.name.charAt(0).toUpperCase()}
-                  {unreadCounts.group[group.id] > 0 && (
-                    <span style={{ position: 'absolute', top: -5, right: -5, background: '#ef4444', color: 'white', fontSize: '0.6rem', padding: '2px 6px', borderRadius: '10px', border: '2px solid white' }}>
-                      {unreadCounts.group[group.id]}
-                    </span>
-                  )}
-                </div>
-                <div>
-                  <div style={{ fontWeight: '500' }}>{group.name}</div>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--color-text-light)' }}>Groupe</div>
-                </div>
-              </div>
-            ))
-          )}
+            {/* ══════════════════════════════════
+                SIDEBAR — Liste des conversations
+                ══════════════════════════════════ */}
+            <div
+              className={`chat-sidebar-wrapper ${activeChat ? 'hidden-mobile' : ''}`}
+            >
 
-          {/* Users Section */}
-          <div style={{ padding: '1.5rem 1rem 0.5rem', fontSize: '0.8rem', fontWeight: 'bold', color: 'var(--color-text-light)', textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <User size={14} /> Contacts
-          </div>
-          {filteredUsers.length === 0 ? (
-            <div style={{ padding: '0 1rem', fontSize: '0.9rem', color: '#999' }}>Aucun contact.</div>
-          ) : (
-            filteredUsers.map(user => (
-              <div 
-                key={user.id} 
-                onClick={() => selectChat('user', user)}
-                style={{ 
-                  padding: '0.8rem 1rem', 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  gap: '0.8rem', 
-                  cursor: 'pointer',
-                  position: 'relative',
-                  background: activeChat?.data?.id === user.id ? 'var(--color-bg-alt)' : 'transparent',
-                  borderLeft: activeChat?.data?.id === user.id ? '3px solid var(--color-primary)' : '3px solid transparent'
-                }}
-              >
+              {/* Barre de recherche */}
+              <div style={{ padding: '0.6rem 1rem', borderBottom: '1px solid #f0f0f0' }}>
                 <div style={{ position: 'relative' }}>
-                  <img src={user.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(user.full_name || 'U')}`} alt="Avatar" style={{ width: '40px', height: '40px', borderRadius: '50%', objectFit: 'cover' }} />
-                  {unreadCounts.user[user.id] > 0 && (
-                    <span style={{ position: 'absolute', top: -5, right: -5, background: '#ef4444', color: 'white', fontSize: '0.6rem', padding: '2px 6px', borderRadius: '10px', border: '2px solid white' }}>
-                      {unreadCounts.user[user.id]}
-                    </span>
-                  )}
-                </div>
-                <div>
-                  <div style={{ fontWeight: '500' }}>{user.full_name || user.username}</div>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--color-text-light)' }}>@{user.username}</div>
+                  <Search size={15} style={{ position: 'absolute', left: 11, top: '50%', transform: 'translateY(-50%)', color: '#aaa', pointerEvents: 'none' }} />
+                  <input
+                    type="text"
+                    placeholder="Rechercher..."
+                    value={searchQuery}
+                    onChange={e => setSearchQuery(e.target.value)}
+                    style={{ width: '100%', padding: '0.55rem 0.9rem 0.55rem 34px', borderRadius: 12, border: '1.5px solid #eee', outline: 'none', fontSize: '0.88rem', background: '#fafafa', fontFamily: 'var(--font-body)', boxSizing: 'border-box' }}
+                    onFocus={e => { e.target.style.borderColor = 'var(--color-primary)'; e.target.style.background = '#fff'; }}
+                    onBlur={e => { e.target.style.borderColor = '#eee'; e.target.style.background = '#fafafa'; }}
+                  />
                 </div>
               </div>
-            ))
-          )}
-        </div>
-      </div>
 
-      {/* ── CHAT WINDOW ── */}
-      <div className={`glass-card chat-window ${!activeChat ? 'hidden-mobile' : ''}`} style={{ flex: 1, display: 'flex', flexDirection: 'column', marginLeft: '1rem', overflow: 'hidden' }}>
-        {activeChat ? (
-          <>
-            {/* EN-TÊTE CHAT : CLIQUABLE POUR VOIR PROFIL SI USER */}
-            <div className="chat-header" style={{ display: 'flex', alignItems: 'center', gap: '0.8rem', padding: '0.5rem 1rem', borderBottom: '1px solid #eee', background: 'white', minHeight: '60px' }}>
-              <button 
-                className="chat-back-btn btn-icon hidden-desktop" 
-                onClick={() => setActiveChat(null)} 
-                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0.2rem', marginRight: '0.2rem', display: 'flex', alignItems: 'center' }}
-              >
-                <ArrowLeft size={24} />
-              </button>
-              
-              <div 
-                style={{ display: 'flex', alignItems: 'center', gap: '1rem', cursor: activeChat.type === 'user' ? 'pointer' : 'default', flex: 1 }} 
-                onClick={() => activeChat.type === 'user' ? navigate(`/profile/${activeChat.data.id}`) : null}
-              >
-                {activeChat.type === 'user' ? (
-                  <img src={activeChat.data.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(activeChat.data.full_name || 'U')}`} alt="Avatar" style={{ width: '40px', height: '40px', borderRadius: '50%', objectFit: 'cover' }} />
+              {/* Liste scrollable */}
+              <div style={{ flex: 1, overflowY: 'auto' }}>
+                {loading ? (
+                  <div style={{ padding: '1.5rem 1rem', color: '#aaa', fontSize: '0.88rem', textAlign: 'center' }}>Chargement...</div>
                 ) : (
-                  <div style={{ width: '40px', height: '40px', borderRadius: '8px', background: 'var(--color-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 'bold', fontSize: '1.2rem' }}>
-                    {activeChat.data.name.charAt(0).toUpperCase()}
-                  </div>
+                  <>
+                    {/* Groupes */}
+                    {filteredGroups.length > 0 && (
+                      <>
+                        <div style={{ padding: '0.75rem 1.2rem 0.3rem', fontSize: '0.7rem', fontWeight: 700, color: '#aaa', letterSpacing: '0.08em', textTransform: 'uppercase' }}>Groupes</div>
+                        {filteredGroups.map(group => {
+                          const isActive = activeChat?.data?.id === group.id;
+                          const unread = unreadCounts.group[group.id] || 0;
+                          return (
+                            <div
+                              key={group.id}
+                              onClick={() => selectChat('group', group)}
+                              style={{
+                                display: 'flex', alignItems: 'center', gap: '0.75rem',
+                                padding: '0.7rem 1.2rem',
+                                cursor: 'pointer',
+                                background: isActive ? '#f0f7ec' : 'transparent',
+                                borderLeft: `3px solid ${isActive ? 'var(--color-primary)' : 'transparent'}`,
+                                transition: 'background 0.15s',
+                              }}
+                            >
+                              <div style={{ width: 42, height: 42, borderRadius: 10, background: 'linear-gradient(135deg,#2d4a22,#446b36)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 700, fontSize: '1rem', flexShrink: 0, position: 'relative' }}>
+                                {group.name[0].toUpperCase()}
+                                {unread > 0 && <span style={{ position: 'absolute', top: -4, right: -4, background: '#ef4444', color: '#fff', fontSize: '0.6rem', padding: '1px 5px', borderRadius: 8, border: '2px solid #fff', fontWeight: 700 }}>{unread}</span>}
+                              </div>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontWeight: unread > 0 ? 700 : 500, fontSize: '0.9rem', color: '#111', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{group.name}</div>
+                                <div style={{ fontSize: '0.76rem', color: unread > 0 ? 'var(--color-primary)' : '#aaa', marginTop: 1 }}>Groupe · {unread > 0 ? `${unread} non lu${unread > 1 ? 's' : ''}` : 'Tap pour ouvrir'}</div>
+                              </div>
+                              <Users size={14} color="#ccc" style={{ flexShrink: 0 }} />
+                            </div>
+                          );
+                        })}
+                      </>
+                    )}
+
+                    {/* Contacts */}
+                    {filteredUsers.length > 0 && (
+                      <>
+                        <div style={{ padding: '0.75rem 1.2rem 0.3rem', fontSize: '0.7rem', fontWeight: 700, color: '#aaa', letterSpacing: '0.08em', textTransform: 'uppercase' }}>Contacts</div>
+                        {filteredUsers.map(user => {
+                          const isActive = activeChat?.data?.id === user.id;
+                          const unread = unreadCounts.user[user.id] || 0;
+                          return (
+                            <div
+                              key={user.id}
+                              onClick={() => selectChat('user', user)}
+                              style={{
+                                display: 'flex', alignItems: 'center', gap: '0.75rem',
+                                padding: '0.7rem 1.2rem',
+                                cursor: 'pointer',
+                                background: isActive ? '#f0f7ec' : 'transparent',
+                                borderLeft: `3px solid ${isActive ? 'var(--color-primary)' : 'transparent'}`,
+                                transition: 'background 0.15s',
+                              }}
+                            >
+                              <div style={{ position: 'relative', flexShrink: 0 }}>
+                                <img
+                                  src={user.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(user.full_name || user.username || 'U')}&background=2d4a22&color=fff&size=80`}
+                                  alt=""
+                                  style={{ width: 42, height: 42, borderRadius: '50%', objectFit: 'cover', border: '2px solid #eee' }}
+                                />
+                                {unread > 0 && <span style={{ position: 'absolute', top: -4, right: -4, background: '#ef4444', color: '#fff', fontSize: '0.6rem', padding: '1px 5px', borderRadius: 8, border: '2px solid #fff', fontWeight: 700 }}>{unread}</span>}
+                              </div>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontWeight: unread > 0 ? 700 : 500, fontSize: '0.9rem', color: '#111', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user.full_name || user.username}</div>
+                                <div style={{ fontSize: '0.76rem', color: unread > 0 ? 'var(--color-primary)' : '#aaa', marginTop: 1 }}>@{user.username}</div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </>
+                    )}
+
+                    {filteredGroups.length === 0 && filteredUsers.length === 0 && (
+                      <div style={{ padding: '2rem 1rem', textAlign: 'center', color: '#bbb', fontSize: '0.88rem' }}>
+                        <MessageCircle size={32} style={{ opacity: 0.25, marginBottom: 8 }} />
+                        <div>Aucune conversation</div>
+                      </div>
+                    )}
+                  </>
                 )}
-                
-                <div>
-                  <h3 style={{ margin: 0, fontSize: '1.1rem' }}>{activeChat.type === 'user' ? (activeChat.data.full_name || activeChat.data.username) : activeChat.data.name}</h3>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--color-text-light)' }}>
-                    {activeChat.type === 'user' ? `@${activeChat.data.username}` : activeChat.data.description}
-                  </div>
-                </div>
               </div>
             </div>
 
-            {/* Messages Area */}
-            <div ref={messagesContainerRef} className="chat-messages-scroll" style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', padding: '1rem', display: 'flex', flexDirection: 'column', gap: '1rem', background: '#fafafa', scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
-              {messages.length === 0 ? (
-                <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#999' }}>
-                   Commencez la discussion...
-                </div>
-              ) : (
-                (() => {
-                  let lastDateString = null;
-                  
-                  return messages.map(msg => {
-                    const isMe = activeChat.type === 'user' ? msg.sender_id === session.user.id : msg.user_id === session.user.id;
-                    let payload = { text: msg.content };
-                    try {
-                      const parsed = JSON.parse(msg.content);
-                      if (parsed.mediaUrl) payload = parsed;
-                    } catch(e) {}
+            {/* ══════════════════════════════════
+                FENÊTRE DE CHAT
+                ══════════════════════════════════ */}
+            <div
+              className={`chat-main-window ${!activeChat ? 'hidden-mobile' : 'mobile-fullscreen'}`}
+            >
+              {activeChat ? (
+                <>
+                  {/* ── Header ── */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.65rem 1rem', background: '#fff', borderBottom: '1px solid #f0f0f0', boxShadow: '0 1px 4px rgba(0,0,0,0.04)', flexShrink: 0, minHeight: 58 }}>
+                    {/* Bouton retour mobile */}
+                    <button
+                      className="hidden-desktop"
+                      onClick={() => navigate('/chat')}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, display: 'flex', alignItems: 'center', color: 'var(--color-primary)', marginLeft: -4, flexShrink: 0 }}
+                    >
+                      <ArrowLeft size={22} />
+                    </button>
 
-                    const msgDate = new Date(msg.created_at);
-                    const dateString = msgDate.toDateString();
-                    const showDateHeader = lastDateString !== dateString;
-                    lastDateString = dateString;
+                    {/* Avatar + infos — cliquable vers profil */}
+                    <div
+                      style={{ display: 'flex', alignItems: 'center', gap: '0.7rem', flex: 1, minWidth: 0, cursor: activeChat.type === 'user' ? 'pointer' : 'default' }}
+                      onClick={() => activeChat.type === 'user' && navigate(`/profile/${activeChat.data.id}`)}
+                    >
+                      {activeChat.type === 'user' ? (
+                        <img
+                          src={activeChat.data.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(activeChat.data.full_name || 'U')}&background=2d4a22&color=fff&size=80`}
+                          alt=""
+                          style={{ width: 38, height: 38, borderRadius: '50%', objectFit: 'cover', border: '2px solid #eee', flexShrink: 0 }}
+                        />
+                      ) : (
+                        <div style={{ width: 38, height: 38, borderRadius: 9, background: 'linear-gradient(135deg,#2d4a22,#446b36)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 700, fontSize: '1rem', flexShrink: 0 }}>
+                          {activeChat.data.name?.[0]?.toUpperCase()}
+                        </div>
+                      )}
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontWeight: 700, fontSize: '0.95rem', color: '#111', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {activeChat.type === 'user' ? (activeChat.data.full_name || activeChat.data.username) : activeChat.data.name}
+                        </div>
+                        <div style={{ fontSize: '0.75rem', color: '#aaa', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {activeChat.type === 'user' ? `@${activeChat.data.username}` : (activeChat.data.description || 'Groupe')}
+                        </div>
+                      </div>
+                    </div>
 
-                    let dateHeaderText = "";
-                    if (showDateHeader) {
-                      const today = new Date();
-                      const yesterday = new Date(today);
-                      yesterday.setDate(yesterday.getDate() - 1);
-                      if (dateString === today.toDateString()) {
-                        dateHeaderText = "Aujourd'hui";
-                      } else if (dateString === yesterday.toDateString()) {
-                        dateHeaderText = "Hier";
-                      } else {
-                        dateHeaderText = msgDate.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
-                      }
-                    }
+                    {/* Bouton Appel Vocal */}
+                    {activeChat.type === 'user' && (
+                      <button
+                        onClick={() => startCall(activeChat.data)}
+                        title="Appeler en vocal"
+                        style={{
+                          background: '#f0f7ec',
+                          border: '1px solid rgba(45,74,34,0.15)',
+                          borderRadius: '50%',
+                          width: '38px',
+                          height: '38px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          cursor: 'pointer',
+                          color: 'var(--color-primary)',
+                          transition: 'all 0.15s ease',
+                          flexShrink: 0,
+                          marginLeft: 'auto'
+                        }}
+                      >
+                        <Phone size={18} />
+                      </button>
+                    )}
+                  </div>
 
-                    const repliedMsg = msg.reply_to_id ? messages.find(m => m.id === msg.reply_to_id) : null;
-                    const msgReactions = Object.entries(msg.reactions || {}).reduce((acc, [uid, rtype]) => {
-                       acc[rtype] = (acc[rtype] || 0) + 1;
-                       return acc;
-                    }, {});
+                  {/* ── Zone messages ── */}
+                  <div
+                    ref={messagesContainerRef}
+                    className="chat-messages-scroll"
+                    style={{ flex: 1, overflowY: 'auto', padding: '0.75rem 0.85rem', display: 'flex', flexDirection: 'column', gap: '4px', scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+                  >
+                    {messages.length === 0 ? (
+                      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#bbb', gap: '0.5rem' }}>
+                        <MessageCircle size={36} style={{ opacity: 0.25 }} />
+                        <span style={{ fontSize: '0.88rem' }}>Commencez la discussion…</span>
+                      </div>
+                    ) : (() => {
+                      let lastDateStr = null;
+                      return messages.map(msg => {
+                        const isMe = activeChat.type === 'user' ? msg.sender_id === session.user.id : msg.user_id === session.user.id;
+                        let payload = { text: msg.content };
+                        try { const p = JSON.parse(msg.content); if (p.mediaUrl) payload = p; } catch {}
 
-                    return (
-                      <React.Fragment key={msg.id}>
-                        {showDateHeader && (
-                          <div style={{ display: 'flex', justifyContent: 'center', margin: '1rem 0' }}>
-                            <span style={{ background: '#e5e7eb', color: '#4b5563', padding: '4px 12px', borderRadius: '12px', fontSize: '0.75rem', fontWeight: '500', textTransform: 'capitalize' }}>
-                              {dateHeaderText}
-                            </span>
-                          </div>
-                        )}
-                        <SwipeableMessage msg={msg} isMe={isMe} onReply={setReplyingToMessage} onReact={handleReact}>
-                          {!isMe && activeChat.type === 'group' && (
-                            <span style={{ fontSize: '0.7rem', color: '#666', marginBottom: '0.2rem', marginLeft: '0.5rem' }}>{msg.sender?.username}</span>
-                          )}
-                          
-                          <div style={{ 
-                            maxWidth: '75%', 
-                            padding: payload.mediaUrl ? '0.5rem' : '0.8rem 1rem', 
-                            borderRadius: '16px', 
-                            background: isMe ? 'var(--color-primary)' : 'white', 
-                            color: isMe ? 'white' : 'var(--color-text)',
-                            boxShadow: '0 2px 4px rgba(0,0,0,0.05)',
-                            borderBottomRightRadius: isMe ? '4px' : '16px',
-                            borderBottomLeftRadius: isMe ? '16px' : '4px',
-                            position: 'relative'
-                          }}>
-                            {/* Replying block inside message bubble */}
-                            {repliedMsg && (
-                              <div 
-                                style={{
-                                  background: isMe ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.05)',
-                                  padding: '0.4rem 0.6rem',
-                                  borderRadius: '8px',
-                                  marginBottom: '0.5rem',
-                                  fontSize: '0.8rem',
-                                  borderLeft: `4px solid ${isMe ? 'white' : 'var(--color-primary)'}`,
-                                  cursor: 'pointer'
-                                }}
-                              >
-                                <div style={{ fontWeight: 'bold', color: isMe ? 'white' : 'var(--color-primary)', marginBottom: '2px' }}>
-                                  {repliedMsg.sender_id === session.user.id || repliedMsg.user_id === session.user.id ? 'Vous' : (repliedMsg.sender?.full_name || repliedMsg.sender?.username || 'Utilisateur')}
-                                </div>
-                                <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', opacity: 0.9 }}>
-                                  {(() => {
-                                     let t = repliedMsg.content;
-                                     try { const p = JSON.parse(t); if(p.text) t = p.text; else if (p.mediaUrl) t = '📎 Média'; } catch(e){}
-                                     return t;
-                                  })()}
-                                </div>
+                        const msgDate = new Date(msg.created_at);
+                        const dateStr = msgDate.toDateString();
+                        const showDate = lastDateStr !== dateStr;
+                        lastDateStr = dateStr;
+
+                        let dateLabel = '';
+                        if (showDate) {
+                          const today = new Date();
+                          const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
+                          if (dateStr === today.toDateString()) dateLabel = "Aujourd'hui";
+                          else if (dateStr === yesterday.toDateString()) dateLabel = 'Hier';
+                          else dateLabel = msgDate.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' });
+                        }
+
+                        const repliedMsg = msg.reply_to_id ? messages.find(m => m.id === msg.reply_to_id) : null;
+                        const msgReactions = Object.entries(msg.reactions || {}).reduce((acc, [, rt]) => { acc[rt] = (acc[rt] || 0) + 1; return acc; }, {});
+
+                        return (
+                          <React.Fragment key={msg.id}>
+                            {/* Séparateur de date */}
+                            {showDate && (
+                              <div style={{ display: 'flex', justifyContent: 'center', margin: '0.75rem 0 0.25rem' }}>
+                                <span style={{ background: 'rgba(0,0,0,0.12)', color: '#fff', padding: '2px 10px', borderRadius: 10, fontSize: '0.7rem', fontWeight: 500, backdropFilter: 'blur(4px)', textTransform: 'capitalize' }}>{dateLabel}</span>
                               </div>
                             )}
 
-                            {payload.mediaUrl && (
-                              <div style={{ marginBottom: payload.text ? '0.5rem' : '0' }}>
-                                {payload.mediaType?.startsWith('image/') ? (
-                                   <img src={payload.mediaUrl} alt="Media" style={{ width: '100%', borderRadius: '8px', cursor: 'pointer' }} onClick={() => window.open(payload.mediaUrl, '_blank')} />
-                                ) : payload.mediaType?.startsWith('video/') ? (
-                                   <video src={payload.mediaUrl} controls style={{ width: '100%', borderRadius: '8px', outline: 'none' }} />
-                                ) : payload.mediaType?.startsWith('audio/') ? (
-                                   <audio src={payload.mediaUrl} controls style={{ width: '100%', outline: 'none' }} />
-                                ) : (
-                                   <a href={payload.mediaUrl} target="_blank" rel="noreferrer" style={{ color: isMe ? 'white' : 'var(--color-primary)', textDecoration: 'underline' }}>Fichier joint</a>
+                            {/* Message */}
+                            <SwipeableMessage msg={msg} isMe={isMe} onReply={setReplyingToMessage} onReact={handleReact}>
+                              {/* Nom de l'envoyeur dans les groupes */}
+                              {!isMe && activeChat.type === 'group' && (
+                                <span style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--color-primary)', marginBottom: 2, marginLeft: 4, display: 'block' }}>{msg.sender?.full_name || msg.sender?.username}</span>
+                              )}
+
+                              {/* Bulle */}
+                              <div style={{
+                                maxWidth: '78%',
+                                padding: payload.mediaUrl ? '0.4rem' : '0.55rem 0.9rem',
+                                borderRadius: isMe ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
+                                background: isMe ? 'linear-gradient(135deg,#2d4a22,#3d6030)' : '#fff',
+                                color: isMe ? '#fff' : '#111',
+                                boxShadow: isMe ? '0 2px 8px rgba(45,74,34,0.2)' : '0 1px 3px rgba(0,0,0,0.08)',
+                                position: 'relative',
+                                opacity: msg._pending ? 0.72 : 1,
+                                transition: 'opacity 0.2s',
+                              }}>
+                                {/* Bloc de réponse */}
+                                {repliedMsg && (
+                                  <div style={{ background: isMe ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.05)', borderLeft: `3px solid ${isMe ? '#fff' : 'var(--color-primary)'}`, borderRadius: 6, padding: '0.3rem 0.6rem', marginBottom: '0.4rem', fontSize: '0.78rem' }}>
+                                    <div style={{ fontWeight: 700, color: isMe ? '#fff' : 'var(--color-primary)', marginBottom: 1 }}>
+                                      {repliedMsg.sender_id === session.user.id || repliedMsg.user_id === session.user.id ? 'Vous' : (repliedMsg.sender?.full_name || repliedMsg.sender?.username || '…')}
+                                    </div>
+                                    <div style={{ opacity: 0.85, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                      {(() => { let t = repliedMsg.content; try { const p = JSON.parse(t); t = p.text || (p.mediaUrl ? '📎 Média' : t); } catch {} return t; })()}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* Média */}
+                                {payload.mediaUrl && (
+                                  <div style={{ marginBottom: payload.text ? '0.4rem' : 0 }}>
+                                    {payload.mediaType?.startsWith('image/') && <img src={payload.mediaUrl} alt="Media" style={{ width: '100%', maxWidth: 240, borderRadius: 10, cursor: 'pointer', display: 'block' }} onClick={() => window.open(payload.mediaUrl, '_blank')} />}
+                                    {payload.mediaType?.startsWith('video/') && <video src={payload.mediaUrl} controls style={{ width: '100%', maxWidth: 240, borderRadius: 10 }} />}
+                                    {payload.mediaType?.startsWith('audio/') && <audio src={payload.mediaUrl} controls style={{ width: '100%' }} />}
+                                    {!payload.mediaType?.match(/^(image|video|audio)\//) && <a href={payload.mediaUrl} target="_blank" rel="noreferrer" style={{ color: isMe ? '#fff' : 'var(--color-primary)', textDecoration: 'underline', fontSize: '0.85rem' }}>📎 Fichier joint</a>}
+                                  </div>
+                                )}
+
+                                {/* Texte */}
+                                {payload.text && <div style={{ fontSize: '0.92rem', lineHeight: 1.45, wordBreak: 'break-word' }}>{payload.text}</div>}
+
+                                {/* Réactions badge */}
+                                {Object.keys(msgReactions).length > 0 && (
+                                  <div style={{ position: 'absolute', bottom: -14, [isMe ? 'right' : 'left']: 6, background: '#fff', borderRadius: 10, padding: '1px 6px', display: 'flex', gap: 2, boxShadow: '0 1px 4px rgba(0,0,0,0.14)', border: '1px solid #f0f0f0', zIndex: 1, fontSize: '0.82rem' }}>
+                                    {Object.entries(msgReactions).map(([type, count]) => {
+                                      const r = REACTIONS.find(x => x.type === type);
+                                      return r ? <span key={type}>{r.emoji}{count > 1 && <span style={{ fontSize: '0.65rem', color: '#555', marginLeft: 1 }}>{count}</span>}</span> : null;
+                                    })}
+                                  </div>
                                 )}
                               </div>
-                            )}
-                            {payload.text && <div style={{ padding: payload.mediaUrl ? '0 0.5rem 0.3rem' : '0' }}>{payload.text}</div>}
-                            
-                            {/* Réactions badge sous la bulle */}
-                            {Object.keys(msgReactions).length > 0 && (
-                              <div style={{ position: 'absolute', bottom: '-16px', [isMe ? 'right' : 'left']: '8px', background: 'white', borderRadius: '12px', padding: '2px 7px', display: 'flex', gap: '3px', alignItems: 'center', boxShadow: '0 1px 4px rgba(0,0,0,0.15)', border: '1px solid #eee', zIndex: 1, fontSize: '0.9rem' }}>
-                                {Object.entries(msgReactions).map(([type, count]) => {
-                                  const r = REACTIONS.find(x => x.type === type);
-                                  return r ? (
-                                    <span key={type}>{r.emoji}{count > 1 && <span style={{ fontSize: '0.68rem', color: '#555', marginLeft: '1px' }}>{count}</span>}</span>
-                                  ) : null;
-                                })}
-                              </div>
-                            )}
-                          </div>
 
-                          {/* Heure + coches */}
-                          <span style={{ fontSize: '0.72rem', color: '#999', marginTop: Object.keys(msgReactions).length > 0 ? '1.2rem' : '0.35rem', display: 'flex', alignItems: 'center', justifyContent: isMe ? 'flex-end' : 'flex-start' }}>
-                            {msgDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                            <MessageTicks isMe={isMe} isRead={msg.is_read} isDelivered={msg.is_delivered} />
-                          </span>
-                        </SwipeableMessage>
-                      </React.Fragment>
-                    );
-                  });
-                })()
+                              {/* Heure + statut */}
+                              <span style={{ fontSize: '0.68rem', color: '#999', marginTop: Object.keys(msgReactions).length > 0 ? '1.1rem' : '0.25rem', display: 'flex', alignItems: 'center', justifyContent: isMe ? 'flex-end' : 'flex-start' }}>
+                                {msg._pending ? (
+                                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: '#bbb' }}>
+                                    envoi…
+                                    <span style={{ width: 9, height: 9, border: '1.5px solid #bbb', borderTopColor: 'transparent', borderRadius: '50%', display: 'inline-block', animation: 'spin 0.8s linear infinite' }} />
+                                  </span>
+                                ) : (
+                                  <>{msgDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}<MessageTicks isMe={isMe} isRead={msg.is_read} isDelivered={msg.is_delivered} /></>
+                                )}
+                              </span>
+                            </SwipeableMessage>
+                          </React.Fragment>
+                        );
+                      });
+                    })()}
+                  </div>
+
+                  {/* ── Barre de réponse ── */}
+                  {replyingToMessage && (
+                    <div style={{ padding: '0.5rem 1rem', background: '#fff', borderTop: '1px solid #f0f0f0', display: 'flex', alignItems: 'center', gap: '0.75rem', borderLeft: '3px solid var(--color-primary)', flexShrink: 0 }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--color-primary)', marginBottom: 1 }}>
+                          Réponse à {replyingToMessage.sender_id === session.user.id || replyingToMessage.user_id === session.user.id ? 'vous-même' : (replyingToMessage.sender?.full_name || replyingToMessage.sender?.username || '…')}
+                        </div>
+                        <div style={{ fontSize: '0.82rem', color: '#666', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {(() => { let t = replyingToMessage.content; try { const p = JSON.parse(t); t = p.text || (p.mediaUrl ? '📎 Média' : t); } catch {} return t; })()}
+                        </div>
+                      </div>
+                      <button onClick={() => setReplyingToMessage(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#bbb', padding: 4, flexShrink: 0 }}><X size={16} /></button>
+                    </div>
+                  )}
+
+                  {/* ── Aperçu fichier ── */}
+                  {mediaFile && (
+                    <div style={{ padding: '0.45rem 1rem', background: '#fff', borderTop: '1px solid #f0f0f0', display: 'flex', alignItems: 'center', gap: '0.6rem', flexShrink: 0 }}>
+                      <span style={{ fontSize: '0.8rem', color: '#666', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>📎 {mediaFile.name}</span>
+                      <button onClick={() => setMediaFile(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444', flexShrink: 0, display: 'flex', alignItems: 'center' }}><X size={15} /></button>
+                    </div>
+                  )}
+
+                  {/* ── Input ── */}
+                  <div style={{ padding: '0.6rem 0.85rem', background: '#fff', borderTop: '1px solid #f0f0f0', flexShrink: 0 }}>
+                    <form onSubmit={handleSendMessage} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                      {/* Bouton fichier */}
+                      <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 6, display: 'flex', alignItems: 'center', color: '#aaa', borderRadius: '50%', transition: 'color 0.15s', flexShrink: 0 }}
+                        onMouseOver={e => e.currentTarget.style.color = 'var(--color-primary)'}
+                        onMouseOut={e => e.currentTarget.style.color = '#aaa'}
+                      >
+                        <Paperclip size={20} />
+                      </button>
+                      <input type="file" ref={fileInputRef} style={{ display: 'none' }} accept="image/*,video/*,audio/*" onChange={e => setMediaFile(e.target.files[0])} />
+
+                      {/* Input texte */}
+                      <input
+                        className="chat-input"
+                        type="text"
+                        value={newMessage}
+                        onChange={e => setNewMessage(e.target.value)}
+                        placeholder="Message…"
+                        disabled={uploadingMedia}
+                        style={{ flex: 1 }}
+                      />
+
+                      {/* Bouton envoyer */}
+                      <button
+                        type="submit"
+                        disabled={(!newMessage.trim() && !mediaFile) || uploadingMedia}
+                        className="chat-send-btn"
+                        style={{ flexShrink: 0 }}
+                      >
+                        {uploadingMedia
+                          ? <span style={{ width: 16, height: 16, border: '2px solid #fff', borderTopColor: 'transparent', borderRadius: '50%', display: 'block', animation: 'spin 0.8s linear infinite' }} />
+                          : <Send size={17} style={{ marginLeft: -1 }} />}
+                      </button>
+                    </form>
+                  </div>
+                </>
+              ) : (
+                /* Écran d'accueil desktop */
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '0.75rem', color: '#bbb' }}>
+                  <div style={{ width: 72, height: 72, borderRadius: '50%', background: 'linear-gradient(135deg,#eae4d3,#f0ede6)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <MessageCircle size={34} color="var(--color-primary)" style={{ opacity: 0.45 }} />
+                  </div>
+                  <div style={{ textAlign: 'center' }}>
+                    <div style={{ fontWeight: 700, fontSize: '1rem', color: 'var(--color-primary)', marginBottom: 4 }}>Vos Messages</div>
+                    <div style={{ fontSize: '0.84rem', maxWidth: 240, lineHeight: 1.5 }}>Sélectionnez une conversation à gauche pour commencer.</div>
+                  </div>
+                </div>
               )}
             </div>
-
-            {/* Reply preview block */}
-            {replyingToMessage && (
-              <div style={{ padding: '0.5rem 1rem', background: '#f0f2f5', borderTop: '1px solid #eee', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderLeft: '4px solid var(--color-primary)' }}>
-                 <div style={{ overflow: 'hidden' }}>
-                   <div style={{ fontSize: '0.8rem', fontWeight: 'bold', color: 'var(--color-primary)', marginBottom: '2px' }}>
-                     Réponse à {replyingToMessage.sender_id === session.user.id || replyingToMessage.user_id === session.user.id ? 'vous-même' : (replyingToMessage.sender?.full_name || replyingToMessage.sender?.username || 'Utilisateur')}
-                   </div>
-                   <div style={{ fontSize: '0.85rem', color: '#65676b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '300px' }}>
-                     {(() => {
-                       let text = replyingToMessage.content;
-                       try { const p = JSON.parse(text); if(p.text) text = p.text; else if (p.mediaUrl) text = '📎 Média'; } catch(e){}
-                       return text;
-                     })()}
-                   </div>
-                 </div>
-                 <button type="button" onClick={() => setReplyingToMessage(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#999', padding: '0.5rem' }}>
-                   <X size={18}/>
-                 </button>
-              </div>
-            )}
-
-            {/* Media preview block */}
-            {mediaFile && (
-              <div style={{ padding: '0.5rem 1rem', background: '#f5f5f5', borderTop: '1px solid #eee', display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                 <div style={{ fontSize: '0.8rem', background: 'white', padding: '0.4rem 0.8rem', borderRadius: '20px', display: 'flex', alignItems: 'center', gap: '0.5rem', border: '1px solid #ddd' }}>
-                   📎 {mediaFile.name} 
-                   <button type="button" onClick={() => setMediaFile(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444', display: 'flex', alignItems: 'center' }}><X size={14}/></button>
-                 </div>
-              </div>
-            )}
-
-            {/* Chat Input */}
-            <div style={{ padding: '1rem', borderTop: '1px solid #eee', background: 'white' }}>
-              <form onSubmit={handleSendMessage} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                <button type="button" onClick={() => fileInputRef.current?.click()} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#666', padding: '0.5rem', display: 'flex', alignItems: 'center' }}>
-                   <Paperclip size={24} />
-                </button>
-                <input type="file" ref={fileInputRef} style={{ display: 'none' }} accept="image/*,video/*,audio/*" onChange={(e) => setMediaFile(e.target.files[0])} />
-                
-                <input 
-                  type="text" 
-                  value={newMessage}
-                  onChange={(e) => setNewMessage(e.target.value)}
-                  placeholder="Écrivez un message..." 
-                  style={{ flex: 1, padding: '0.8rem 1.2rem', borderRadius: '24px', border: '1px solid #ddd', outline: 'none' }}
-                  disabled={uploadingMedia}
-                />
-                <button type="submit" disabled={(!newMessage.trim() && !mediaFile) || uploadingMedia} style={{ background: 'var(--color-primary)', color: 'white', border: 'none', borderRadius: '50%', width: '45px', minWidth: '45px', height: '45px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', opacity: ((!newMessage.trim() && !mediaFile) || uploadingMedia) ? 0.5 : 1 }}>
-                  {uploadingMedia ? <div className="spinner" style={{width: 18, height: 18, border: '2px solid white', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 1s linear infinite'}}></div> : <Send size={18} style={{ marginLeft: '-2px' }} />}
-                </button>
-              </form>
-            </div>
-          </>
-        ) : (
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#999' }}>
-            <MessageCircle size={64} style={{ opacity: 0.2, marginBottom: '1rem' }} />
-            <h3>Vos Messages</h3>
-            <p>Sélectionnez un contact ou un groupe pour démarrer une discussion.</p>
           </div>
-        )}
-      </div>
-
-      </div>
         </div>
       </div>
-
-
-    </div>
     </>
   );
 };

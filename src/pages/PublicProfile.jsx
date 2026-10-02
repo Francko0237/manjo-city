@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import LeftSidebar from '../components/LeftSidebar';
-import { ArrowLeft, MapPin, Calendar, Image as ImageIcon, Info, ThumbsUp, MessageSquare, Send, X, Heart } from 'lucide-react';
+import { ArrowLeft, MapPin, Calendar, Image as ImageIcon, Info, ThumbsUp, MessageSquare, Send, X, Heart, MessageCircle } from 'lucide-react';
 
 const REACTIONS = [
   { type: 'like',  icon: <ThumbsUp size={18} fill="#2d4a22" strokeWidth={2} color="#2d4a22" />, emoji: '👍', label: 'J\'aime', color: '#2d4a22' },
@@ -15,6 +15,7 @@ const REACTIONS = [
 
 const PublicProfile = () => {
   const { userId } = useParams();
+  const navigate = useNavigate();
   const [profile, setProfile] = useState(null);
   const [myProfile, setMyProfile] = useState(null);
   const [posts, setPosts] = useState([]);
@@ -257,9 +258,20 @@ const PublicProfile = () => {
             <div style={{ padding: '0 2rem 2rem', position: 'relative', marginTop: '-60px' }}>
               <div style={{ display: 'flex', alignItems: 'flex-end', gap: '1.5rem', flexWrap: 'wrap' }}>
                 <img src={profile.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName)}&background=random`} alt="Avatar" style={{ width: '120px', height: '120px', borderRadius: '50%', border: '4px solid white', objectFit: 'cover', background: 'white', boxShadow: '0 4px 15px rgba(0,0,0,0.1)' }} />
-                <div style={{ paddingBottom: '0.5rem', flex: 1 }}>
-                  <h1 style={{ margin: 0, fontSize: '1.8rem', color: '#1a1a1a', fontFamily: 'var(--font-heading)' }}>{displayName}</h1>
-                  <p style={{ margin: 0, color: 'var(--color-primary)', fontWeight: '600' }}>@{profile.username}</p>
+                <div style={{ paddingBottom: '0.5rem', flex: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', flexWrap: 'wrap', gap: '1rem' }}>
+                  <div>
+                    <h1 style={{ margin: 0, fontSize: '1.8rem', color: '#1a1a1a', fontFamily: 'var(--font-heading)' }}>{displayName}</h1>
+                    <p style={{ margin: 0, color: 'var(--color-primary)', fontWeight: '600' }}>@{profile.username}</p>
+                  </div>
+                  {session?.user?.id !== profile.id && (
+                    <button
+                      onClick={() => navigate(`/chat/user/${profile.id}`)}
+                      className="btn btn-primary"
+                      style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', borderRadius: '20px', padding: '0.5rem 1.2rem' }}
+                    >
+                      <MessageCircle size={18} /> Message
+                    </button>
+                  )}
                 </div>
               </div>
               {profile.bio && (

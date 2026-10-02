@@ -17,6 +17,8 @@ import UsersList from './pages/UsersList';
 import PublicProfile from './pages/PublicProfile';
 import DevInfo from './pages/DevInfo';
 import Reviews from './pages/Reviews';
+import { VoiceCallProvider } from './context/VoiceCallContext';
+import VoiceCallModal from './components/VoiceCallModal';
 import './index.css';
 
 function AppRoutes() {
@@ -36,6 +38,8 @@ function AppRoutes() {
             <Route path="/profile" element={<Profile />} />
             <Route path="/profile/:userId" element={<PublicProfile />} />
             <Route path="/chat" element={<Chat />} />
+            <Route path="/chat/user/:userId" element={<Chat />} />
+            <Route path="/chat/group/:groupId" element={<Chat />} />
             <Route path="/groups" element={<Groups />} />
             <Route path="/users" element={<UsersList />} />
             <Route path="/devinfo" element={<DevInfo />} />
@@ -43,6 +47,7 @@ function AppRoutes() {
           </Routes>
         </main>
         <Footer />
+        <VoiceCallModal />
       </div>
     </ErrorBoundary>
   );
@@ -67,7 +72,9 @@ function App() {
 
   return (
     <Router>
-      <AppRoutes />
+      <VoiceCallProvider>
+        <AppRoutes />
+      </VoiceCallProvider>
     </Router>
   );
 }
