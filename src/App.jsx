@@ -17,6 +17,7 @@ import UsersList from './pages/UsersList';
 import PublicProfile from './pages/PublicProfile';
 import DevInfo from './pages/DevInfo';
 import Reviews from './pages/Reviews';
+import { AuthProvider } from './context/AuthContext';
 import { VoiceCallProvider } from './context/VoiceCallContext';
 import VoiceCallModal from './components/VoiceCallModal';
 import './index.css';
@@ -72,9 +73,11 @@ function App() {
 
   return (
     <Router>
-      <VoiceCallProvider>
-        <AppRoutes />
-      </VoiceCallProvider>
+      <AuthProvider>
+        <VoiceCallProvider>
+          <AppRoutes />
+        </VoiceCallProvider>
+      </AuthProvider>
     </Router>
   );
 }

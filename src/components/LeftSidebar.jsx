@@ -1,27 +1,19 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Users, Calendar, Home, User, Info, BookOpen, MessageCircle, LogOut } from 'lucide-react';
 import { supabase } from '../supabaseClient';
+import { useAuth } from '../context/AuthContext';
 
 const LeftSidebar = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const isActive = (path) => location.pathname === path;
-  const [profile, setProfile] = useState(null);
+  const { profile } = useAuth();
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
     navigate('/auth');
   };
-
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) {
-        supabase.from('profiles').select('*').eq('id', session.user.id).single()
-          .then(({ data }) => { if (data) setProfile(data); });
-      }
-    });
-  }, []);
 
   return (
     <div className="feed-sidebar-left">

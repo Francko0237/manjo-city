@@ -1,35 +1,14 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { Menu, X, User, LogOut, Home, Users, MessageCircle, Info, Calendar, BookOpen, Smartphone, Star, Settings } from 'lucide-react';
 import { supabase } from '../supabaseClient';
+import { useAuth } from '../context/AuthContext';
 
 const Navbar = () => {
   const [isOpen, setIsOpen] = useState(false);
-  const [session, setSession] = useState(null);
+  const { session, isAdmin } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-
-  const [isAdmin, setIsAdmin] = useState(false);
-
-  useEffect(() => {
-    const checkAdminRole = async (sessionData) => {
-      if (sessionData?.user) {
-        const { data: profile } = await supabase.from('profiles').select('role').eq('id', sessionData.user.id).single();
-        setIsAdmin(profile?.role === 'admin');
-      } else {
-        setIsAdmin(false);
-      }
-    };
-
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      checkAdminRole(session);
-    });
-    supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      checkAdminRole(session);
-    });
-  }, []);
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
