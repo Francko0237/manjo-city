@@ -7,8 +7,20 @@ const RTC_CONFIG = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:stun2.l.google.com:19302' }
+    { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun3.l.google.com:19302' },
+    { urls: 'stun:stun4.l.google.com:19302' },
+    { urls: 'stun:global.stun.twilio.com:3478' }
   ]
+};
+
+// High-quality audio constraints for clear speech with echo cancellation & noise suppression
+const HIGH_QUALITY_AUDIO_CONSTRAINTS = {
+  echoCancellation: true,
+  noiseSuppression: true,
+  autoGainControl: true,
+  channelCount: 1,
+  sampleRate: 48000
 };
 
 class SoundManager {
@@ -79,10 +91,12 @@ export const VoiceCallProvider = ({ children }) => {
 
   const pcRef = useRef(null);
   const localStreamRef = useRef(null);
+  const remoteStreamRef = useRef(null);
   const remoteAudioRef = useRef(null);
   const remoteVideoRef = useRef(null);
   const localVideoRef = useRef(null);
   const pendingOfferRef = useRef(null);
+  const pendingIceCandidatesRef = useRef([]);
   const timerRef = useRef(null);
   const channelRef = useRef(null);
   const targetChannelRef = useRef(null);
@@ -150,6 +164,8 @@ export const VoiceCallProvider = ({ children }) => {
       targetChannelRef.current = null;
     }
     pendingOfferRef.current = null;
+    pendingIceCandidatesRef.current = [];
+    remoteStreamRef.current = null;
     setIsMuted(false);
     setIsCameraOff(false);
   }, []);
@@ -170,6 +186,19 @@ export const VoiceCallProvider = ({ children }) => {
       setPeerUser(null);
     }, 1200);
   }, [peerUser, myProfile, cleanupCall]);
+
+  // Attach remote stream to HTML audio/video elements
+  const attachRemoteStream = useCallback((stream) => {
+    remoteStreamRef.current = stream;
+    if (remoteAudioRef.current) {
+      remoteAudioRef.current.srcObject = stream;
+      remoteAudioRef.current.play().catch(err => console.warn("Audio autoplay blocked:", err));
+    }
+    if (remoteVideoRef.current) {
+      remoteVideoRef.current.srcObject = stream;
+      remoteVideoRef.current.play().catch(err => console.warn("Video autoplay blocked:", err));
+    }
+  }, []);
 
   // Handle incoming signaling messages
   useEffect(() => {
@@ -205,6 +234,11 @@ export const VoiceCallProvider = ({ children }) => {
         if (pcRef.current && payload.answer) {
           try {
             await pcRef.current.setRemoteDescription(new RTCSessionDescription(payload.answer));
+            // Add any queued ICE candidates
+            while (pendingIceCandidatesRef.current.length > 0) {
+              const candidate = pendingIceCandidatesRef.current.shift();
+              await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+            }
             setCallState('connected');
           } catch (e) {
             console.error("Error setting remote answer:", e);
@@ -212,11 +246,15 @@ export const VoiceCallProvider = ({ children }) => {
         }
       })
       .on('broadcast', { event: 'ice-candidate' }, async ({ payload }) => {
-        if (pcRef.current && payload.candidate) {
-          try {
-            await pcRef.current.addIceCandidate(new RTCIceCandidate(payload.candidate));
-          } catch (e) {
-            console.error("Error adding ICE candidate:", e);
+        if (payload.candidate) {
+          if (pcRef.current && pcRef.current.remoteDescription) {
+            try {
+              await pcRef.current.addIceCandidate(new RTCIceCandidate(payload.candidate));
+            } catch (e) {
+              console.error("Error adding ICE candidate:", e);
+            }
+          } else {
+            pendingIceCandidatesRef.current.push(payload.candidate);
           }
         }
       })
@@ -265,9 +303,9 @@ export const VoiceCallProvider = ({ children }) => {
     soundManager.playRingtone();
 
     try {
-      // 1. Get media access
+      // 1. Get media access with noise suppression & echo cancellation
       const constraints = {
-        audio: true,
+        audio: HIGH_QUALITY_AUDIO_CONSTRAINTS,
         video: type === 'video' ? { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' } : false
       };
 
@@ -286,10 +324,8 @@ export const VoiceCallProvider = ({ children }) => {
 
       // Handle remote tracks
       pc.ontrack = (event) => {
-        if (type === 'video' && remoteVideoRef.current) {
-          remoteVideoRef.current.srcObject = event.streams[0];
-        } else if (remoteAudioRef.current) {
-          remoteAudioRef.current.srcObject = event.streams[0];
+        if (event.streams && event.streams[0]) {
+          attachRemoteStream(event.streams[0]);
         }
       };
 
@@ -305,7 +341,10 @@ export const VoiceCallProvider = ({ children }) => {
       };
 
       // 3. Create Offer
-      const offer = await pc.createOffer();
+      const offer = await pc.createOffer({
+        offerToReceiveAudio: true,
+        offerToReceiveVideo: type === 'video'
+      });
       await pc.setLocalDescription(offer);
 
       // 4. Send offer via Supabase broadcast channel to target user
@@ -345,7 +384,7 @@ export const VoiceCallProvider = ({ children }) => {
 
     try {
       const constraints = {
-        audio: true,
+        audio: HIGH_QUALITY_AUDIO_CONSTRAINTS,
         video: type === 'video' ? { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' } : false
       };
 
@@ -362,10 +401,8 @@ export const VoiceCallProvider = ({ children }) => {
       stream.getTracks().forEach(track => pc.addTrack(track, stream));
 
       pc.ontrack = (event) => {
-        if (type === 'video' && remoteVideoRef.current) {
-          remoteVideoRef.current.srcObject = event.streams[0];
-        } else if (remoteAudioRef.current) {
-          remoteAudioRef.current.srcObject = event.streams[0];
+        if (event.streams && event.streams[0]) {
+          attachRemoteStream(event.streams[0]);
         }
       };
 
@@ -380,6 +417,13 @@ export const VoiceCallProvider = ({ children }) => {
       };
 
       await pc.setRemoteDescription(new RTCSessionDescription(offerData.offer));
+      
+      // Process queued ICE candidates
+      while (pendingIceCandidatesRef.current.length > 0) {
+        const candidate = pendingIceCandidatesRef.current.shift();
+        await pc.addIceCandidate(new RTCIceCandidate(candidate));
+      }
+
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
 
@@ -447,6 +491,7 @@ export const VoiceCallProvider = ({ children }) => {
         callDuration: formatDuration(durationSeconds),
         localVideoRef,
         remoteVideoRef,
+        attachRemoteStream,
         startCall,
         acceptCall,
         rejectCall,
@@ -456,8 +501,8 @@ export const VoiceCallProvider = ({ children }) => {
       }}
     >
       {children}
-      {/* Hidden Audio element for remote voice stream */}
-      <audio ref={remoteAudioRef} autoPlay playsInline />
+      {/* Persistent Audio Element for Remote Voice */}
+      <audio ref={remoteAudioRef} autoPlay playsInline style={{ display: 'none' }} />
     </VoiceCallContext.Provider>
   );
 };
