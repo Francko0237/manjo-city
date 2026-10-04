@@ -71,13 +71,17 @@ export const VoiceCallProvider = ({ children }) => {
   const [session, setSession] = useState(null);
   const [myProfile, setMyProfile] = useState(null);
   const [callState, setCallState] = useState('idle'); // 'idle' | 'calling' | 'ringing' | 'connected' | 'ended'
+  const [callType, setCallType] = useState('audio'); // 'audio' | 'video'
   const [peerUser, setPeerUser] = useState(null);
   const [isMuted, setIsMuted] = useState(false);
+  const [isCameraOff, setIsCameraOff] = useState(false);
   const [durationSeconds, setDurationSeconds] = useState(0);
 
   const pcRef = useRef(null);
   const localStreamRef = useRef(null);
   const remoteAudioRef = useRef(null);
+  const remoteVideoRef = useRef(null);
+  const localVideoRef = useRef(null);
   const pendingOfferRef = useRef(null);
   const timerRef = useRef(null);
   const channelRef = useRef(null);
@@ -137,15 +141,17 @@ export const VoiceCallProvider = ({ children }) => {
       pcRef.current.close();
       pcRef.current = null;
     }
-    if (remoteAudioRef.current) {
-      remoteAudioRef.current.srcObject = null;
-    }
+    if (remoteAudioRef.current) remoteAudioRef.current.srcObject = null;
+    if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
+    if (localVideoRef.current) localVideoRef.current.srcObject = null;
+
     if (targetChannelRef.current) {
       supabase.removeChannel(targetChannelRef.current);
       targetChannelRef.current = null;
     }
     pendingOfferRef.current = null;
     setIsMuted(false);
+    setIsCameraOff(false);
   }, []);
 
   // End or cancel call
@@ -175,7 +181,6 @@ export const VoiceCallProvider = ({ children }) => {
     channel
       .on('broadcast', { event: 'call-offer' }, async ({ payload }) => {
         if (callState !== 'idle') {
-          // Send busy signal if already on a call
           const ch = supabase.channel(`call_signaling_${payload.caller.id}`);
           ch.subscribe((status) => {
             if (status === 'SUBSCRIBED') {
@@ -186,11 +191,11 @@ export const VoiceCallProvider = ({ children }) => {
         }
 
         setPeerUser(payload.caller);
-        pendingOfferRef.current = payload.offer;
+        setCallType(payload.callType || 'audio');
+        pendingOfferRef.current = payload;
         setCallState('ringing');
         soundManager.playRingtone();
 
-        // Connect back signaling channel to caller
         const callerChan = supabase.channel(`call_signaling_${payload.caller.id}`);
         callerChan.subscribe();
         targetChannelRef.current = callerChan;
@@ -246,8 +251,8 @@ export const VoiceCallProvider = ({ children }) => {
     };
   }, [session?.user?.id, callState, cleanupCall, peerUser]);
 
-  // Initiate an outgoing call
-  const startCall = async (targetUser) => {
+  // Initiate an outgoing call (Audio or Video)
+  const startCall = async (targetUser, type = 'audio') => {
     if (!session) {
       alert("Veuillez vous connecter pour passer un appel.");
       return;
@@ -255,13 +260,23 @@ export const VoiceCallProvider = ({ children }) => {
     if (callState !== 'idle') return;
 
     setPeerUser(targetUser);
+    setCallType(type);
     setCallState('calling');
     soundManager.playRingtone();
 
     try {
-      // 1. Get microphone access
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      // 1. Get media access
+      const constraints = {
+        audio: true,
+        video: type === 'video' ? { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' } : false
+      };
+
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
       localStreamRef.current = stream;
+
+      if (type === 'video' && localVideoRef.current) {
+        localVideoRef.current.srcObject = stream;
+      }
 
       // 2. Setup RTCPeerConnection
       const pc = new RTCPeerConnection(RTC_CONFIG);
@@ -269,9 +284,11 @@ export const VoiceCallProvider = ({ children }) => {
 
       stream.getTracks().forEach(track => pc.addTrack(track, stream));
 
-      // Handle remote track
+      // Handle remote tracks
       pc.ontrack = (event) => {
-        if (remoteAudioRef.current) {
+        if (type === 'video' && remoteVideoRef.current) {
+          remoteVideoRef.current.srcObject = event.streams[0];
+        } else if (remoteAudioRef.current) {
           remoteAudioRef.current.srcObject = event.streams[0];
         }
       };
@@ -302,14 +319,15 @@ export const VoiceCallProvider = ({ children }) => {
             event: 'call-offer',
             payload: {
               caller: myProfile || { id: session.user.id, username: 'Habitant', full_name: 'Habitant' },
-              offer
+              offer,
+              callType: type
             }
           });
         }
       });
     } catch (err) {
       console.error("Error starting call:", err);
-      alert("Impossible d'accéder au microphone : " + err.message);
+      alert("Impossible d'accéder au microphone/caméra : " + err.message);
       soundManager.stop();
       cleanupCall();
       setCallState('idle');
@@ -322,19 +340,31 @@ export const VoiceCallProvider = ({ children }) => {
     soundManager.stop();
     if (!pendingOfferRef.current || !peerUser) return;
 
+    const offerData = pendingOfferRef.current;
+    const type = offerData.callType || 'audio';
+
     try {
-      // 1. Get local mic stream
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      const constraints = {
+        audio: true,
+        video: type === 'video' ? { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' } : false
+      };
+
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
       localStreamRef.current = stream;
 
-      // 2. Setup RTCPeerConnection
+      if (type === 'video' && localVideoRef.current) {
+        localVideoRef.current.srcObject = stream;
+      }
+
       const pc = new RTCPeerConnection(RTC_CONFIG);
       pcRef.current = pc;
 
       stream.getTracks().forEach(track => pc.addTrack(track, stream));
 
       pc.ontrack = (event) => {
-        if (remoteAudioRef.current) {
+        if (type === 'video' && remoteVideoRef.current) {
+          remoteVideoRef.current.srcObject = event.streams[0];
+        } else if (remoteAudioRef.current) {
           remoteAudioRef.current.srcObject = event.streams[0];
         }
       };
@@ -349,12 +379,10 @@ export const VoiceCallProvider = ({ children }) => {
         }
       };
 
-      // 3. Set remote offer & create answer
-      await pc.setRemoteDescription(new RTCSessionDescription(pendingOfferRef.current));
+      await pc.setRemoteDescription(new RTCSessionDescription(offerData.offer));
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
 
-      // 4. Send answer
       if (targetChannelRef.current) {
         targetChannelRef.current.send({
           type: 'broadcast',
@@ -366,7 +394,7 @@ export const VoiceCallProvider = ({ children }) => {
       setCallState('connected');
     } catch (err) {
       console.error("Error accepting call:", err);
-      alert("Impossible d'accéder au microphone.");
+      alert("Impossible d'accéder aux périphériques média.");
       endCall();
     }
   };
@@ -397,18 +425,34 @@ export const VoiceCallProvider = ({ children }) => {
     }
   };
 
+  // Toggle camera video
+  const toggleCamera = () => {
+    if (localStreamRef.current) {
+      const videoTrack = localStreamRef.current.getVideoTracks()[0];
+      if (videoTrack) {
+        videoTrack.enabled = !videoTrack.enabled;
+        setIsCameraOff(!videoTrack.enabled);
+      }
+    }
+  };
+
   return (
     <VoiceCallContext.Provider
       value={{
         callState,
+        callType,
         peerUser,
         isMuted,
+        isCameraOff,
         callDuration: formatDuration(durationSeconds),
+        localVideoRef,
+        remoteVideoRef,
         startCall,
         acceptCall,
         rejectCall,
         endCall,
-        toggleMute
+        toggleMute,
+        toggleCamera
       }}
     >
       {children}

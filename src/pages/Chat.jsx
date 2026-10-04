@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from '../supabaseClient';
-import { Send, Users, User, ArrowLeft, Search, Check, CheckCheck, MessageCircle, Paperclip, X, Info, Phone } from 'lucide-react';
+import { Send, Users, User, ArrowLeft, Search, Check, CheckCheck, MessageCircle, Paperclip, X, Info, Phone, Video } from 'lucide-react';
 import { useNavigate, useLocation, useParams, Link } from 'react-router-dom';
 import LeftSidebar from '../components/LeftSidebar';
 import { useVoiceCall } from '../context/VoiceCallContext';
@@ -1032,29 +1032,48 @@ const Chat = () => {
                       </div>
                     </div>
 
-                    {/* Bouton Appel Vocal */}
+                    {/* Boutons d'Appel Vocal et Vidéo */}
                     {activeChat.type === 'user' && (
-                      <button
-                        onClick={() => startCall(activeChat.data)}
-                        title="Appeler en vocal"
-                        style={{
-                          background: '#f0f7ec',
-                          border: '1px solid rgba(45,74,34,0.15)',
-                          borderRadius: '50%',
-                          width: '38px',
-                          height: '38px',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          cursor: 'pointer',
-                          color: 'var(--color-primary)',
-                          transition: 'all 0.15s ease',
-                          flexShrink: 0,
-                          marginLeft: 'auto'
-                        }}
-                      >
-                        <Phone size={18} />
-                      </button>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: 'auto', flexShrink: 0 }}>
+                        <button
+                          onClick={() => startCall(activeChat.data, 'audio')}
+                          title="Appeler en vocal"
+                          style={{
+                            background: '#f0f7ec',
+                            border: '1px solid rgba(45,74,34,0.15)',
+                            borderRadius: '50%',
+                            width: '38px',
+                            height: '38px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            cursor: 'pointer',
+                            color: 'var(--color-primary)',
+                            transition: 'all 0.15s ease'
+                          }}
+                        >
+                          <Phone size={18} />
+                        </button>
+                        <button
+                          onClick={() => startCall(activeChat.data, 'video')}
+                          title="Appeler en vidéo"
+                          style={{
+                            background: '#f0f7ec',
+                            border: '1px solid rgba(45,74,34,0.15)',
+                            borderRadius: '50%',
+                            width: '38px',
+                            height: '38px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            cursor: 'pointer',
+                            color: 'var(--color-primary)',
+                            transition: 'all 0.15s ease'
+                          }}
+                        >
+                          <Video size={18} />
+                        </button>
+                      </div>
                     )}
                   </div>
 
