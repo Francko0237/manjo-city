@@ -556,37 +556,19 @@ img {
     display: flex !important;
   }
 
-  /* La fenêtre de discussion occupe tout l'espace restant */
   .chat-main-window {
     display: flex !important;
-    flex-direction: column !important;
-    flex: 1 !important;
-    min-width: 0 !important;
     position: relative !important;
-    /* height: 100% hérité du parent pour ne pas déborder */
-    height: 100% !important;
-    overflow: hidden !important;
-    z-index: auto !important;
-  }
-
-  /* Annule le fullscreen mobile */
-  .chat-main-window.mobile-fullscreen {
-    position: relative !important;
-    height: 100% !important;
+    height: auto !important;
     width: auto !important;
     z-index: auto !important;
   }
 
-  /* Corrige la zone messages pour qu'elle scroll sans déborder */
-  .chat-main-window > div[style*="overflow-y"] {
-    flex: 1 !important;
-    overflow-y: auto !important;
-    min-height: 0 !important;
-  }
-
-  /* Sécurité barre navigation Android/iOS */
-  .chat-main-window > div:last-child {
-    padding-bottom: max(0.5rem, env(safe-area-inset-bottom)) !important;
+  .chat-main-window.mobile-fullscreen {
+    position: relative !important;
+    height: auto !important;
+    width: auto !important;
+    z-index: auto !important;
   }
 }
 
