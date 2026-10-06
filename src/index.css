@@ -549,6 +549,7 @@ img {
     width: 280px !important;
     flex-shrink: 0 !important;
     display: flex !important;
+    height: 100% !important;
   }
 
   /* Force l'affichage des deux colonnes simultanément */
@@ -559,15 +560,19 @@ img {
   .chat-main-window {
     display: flex !important;
     position: relative !important;
-    height: auto !important;
+    height: 100% !important;
+    min-height: 0 !important;
     width: auto !important;
+    flex: 1 !important;
     z-index: auto !important;
   }
 
   .chat-main-window.mobile-fullscreen {
     position: relative !important;
-    height: auto !important;
+    height: 100% !important;
+    min-height: 0 !important;
     width: auto !important;
+    flex: 1 !important;
     z-index: auto !important;
   }
 }

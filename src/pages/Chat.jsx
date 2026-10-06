@@ -878,7 +878,7 @@ const Chat = () => {
           <LeftSidebar />
 
           {/* ── CHAT LAYOUT ── */}
-          <div style={{ flex: 1, minWidth: 0, display: 'flex', height: 'calc(100dvh - 116px)' }}>
+          <div style={{ flex: 1, minWidth: 0, display: 'flex', height: 'calc(100dvh - 116px)', minHeight: 0 }}>
 
             {/* ══════════════════════════════════
                 SIDEBAR — Liste des conversations
@@ -1224,7 +1224,7 @@ const Chat = () => {
                   )}
 
                   {/* ── Input ── */}
-                  <div style={{ padding: '0.6rem 0.85rem', background: '#fff', borderTop: '1px solid #f0f0f0', flexShrink: 0 }}>
+                  <div style={{ padding: '0.75rem 0.85rem calc(0.75rem + env(safe-area-inset-bottom, 8px))', background: '#fff', borderTop: '1px solid #f0f0f0', flexShrink: 0 }}>
                     <form onSubmit={handleSendMessage} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                       {/* Bouton fichier */}
                       <button
