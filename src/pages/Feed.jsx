@@ -1307,13 +1307,8 @@ const Feed = () => {
           )}
         </div>
 
-        {/* RIGHT SIDEBAR (PC) */}
-        <div className="feed-sidebar-right">
-           <h4 style={{ color: '#65676b', fontSize: '1.05rem', margin: '0 0 1rem 0', padding: '0.5rem' }}>Contacts</h4>
-           <div style={{ padding: '0.5rem', color: '#999', fontSize: '0.85rem' }}>
-             Vos amis apparaîtront ici.
-           </div>
-        </div>
+        {/* RIGHT SIDEBAR supprimé — panneau Contacts retiré */}
+        <div className="feed-sidebar-right" style={{ display: 'none' }}></div>
 
       </div>
 

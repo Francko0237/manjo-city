@@ -541,6 +541,37 @@ img {
   }
 }
 
+/* Sur tablette (769px - 1024px) : affichage deux colonnes côte à côte comme desktop */
+@media (min-width: 769px) and (max-width: 1024px) {
+  /* Réinitialise les overrides mobile pour le chat */
+  .chat-sidebar-wrapper {
+    max-width: 280px !important;
+    width: 280px !important;
+    flex-shrink: 0 !important;
+    display: flex !important;
+  }
+
+  /* Force l'affichage des deux colonnes simultanément */
+  .chat-sidebar-wrapper.hidden-mobile {
+    display: flex !important;
+  }
+
+  .chat-main-window {
+    display: flex !important;
+    position: relative !important;
+    height: auto !important;
+    width: auto !important;
+    z-index: auto !important;
+  }
+
+  .chat-main-window.mobile-fullscreen {
+    position: relative !important;
+    height: auto !important;
+    width: auto !important;
+    z-index: auto !important;
+  }
+}
+
 /* Glassmorphic Back Button for Hero Sections */
 .btn-back-hero {
   position: absolute;
