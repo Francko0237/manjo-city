@@ -287,6 +287,7 @@ const Chat = () => {
   }, []);
 
   useEffect(() => {
+    // Restauration initiale — on attend la réponse avant d'afficher quoi que ce soit
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       if (session) {
@@ -294,16 +295,20 @@ const Chat = () => {
         fetchGroups(session.user.id);
         fetchUnreadCounts(session.user.id);
       }
+      setLoading(false); // ← débloque l'affichage une fois la session connue
     });
 
-    supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       if (session) {
         fetchUsers(session.user.id);
         fetchGroups(session.user.id);
         fetchUnreadCounts(session.user.id);
       }
+      setLoading(false);
     });
+
+    return () => subscription?.unsubscribe();
   }, []);
 
   const fetchUnreadCounts = async (userId) => {
@@ -821,6 +826,19 @@ const Chat = () => {
   const filteredGroups = groups.filter(group => 
     group.name?.toLowerCase().includes(searchQuery.toLowerCase())
   );
+
+  // Pendant la restauration de session (rechargement), on affiche un spinner
+  // pour éviter d'afficher faussement l'écran "non connecté"
+  if (loading) {
+    return (
+      <div className="main-content-wrapper">
+        <div className="container text-center" style={{ paddingTop: '4rem', minHeight: '60vh', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1rem' }}>
+          <div style={{ width: 40, height: 40, border: '4px solid #e2e8f0', borderTopColor: '#6c63ff', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+          <p style={{ color: '#94a3b8' }}>Chargement...</p>
+        </div>
+      </div>
+    );
+  }
 
   if (!session) {
     return (
