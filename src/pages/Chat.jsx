@@ -4,6 +4,7 @@ import { Send, Users, User, ArrowLeft, Search, Check, CheckCheck, MessageCircle,
 import { useNavigate, useLocation, useParams, Link } from 'react-router-dom';
 import LeftSidebar from '../components/LeftSidebar';
 import { useVoiceCall } from '../context/VoiceCallContext';
+import { useAuth } from '../context/AuthContext';
 
 // ── Composant coches de statut WhatsApp ──
 const MessageTicks = ({ isMe, isRead, isDelivered }) => {
@@ -233,13 +234,14 @@ const SwipeableMessage = ({ msg, isMe, onReply, onReact, children }) => {
 };
 
 const Chat = () => {
-  const [session, setSession] = useState(null);
+  // ── Session : source unique de vérité via AuthContext (fix PC disconnect) ──
+  const { session, loading: authLoading } = useAuth();
   const [users, setUsers] = useState([]);
   const [groups, setGroups] = useState([]);
   const [activeChat, setActiveChat] = useState(null);
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false); // loading = chargement des données chat uniquement
   const [searchQuery, setSearchQuery] = useState('');
   const [unreadCounts, setUnreadCounts] = useState({ user: {}, group: {} });
   const [viewingUserProfile, setViewingUserProfile] = useState(null);
@@ -286,30 +288,16 @@ const Chat = () => {
     };
   }, []);
 
+  // Chargement des données chat quand la session est disponible
   useEffect(() => {
-    // Restauration initiale — on attend la réponse avant d'afficher quoi que ce soit
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      if (session) {
-        fetchUsers(session.user.id);
-        fetchGroups(session.user.id);
-        fetchUnreadCounts(session.user.id);
-      }
-      setLoading(false); // ← débloque l'affichage une fois la session connue
-    });
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      if (session) {
-        fetchUsers(session.user.id);
-        fetchGroups(session.user.id);
-        fetchUnreadCounts(session.user.id);
-      }
-      setLoading(false);
-    });
-
-    return () => subscription?.unsubscribe();
-  }, []);
+    if (!session?.user?.id) return;
+    setLoading(true);
+    Promise.all([
+      fetchUsers(session.user.id),
+      fetchGroups(session.user.id),
+      fetchUnreadCounts(session.user.id),
+    ]).finally(() => setLoading(false));
+  }, [session?.user?.id]); // se déclenche uniquement quand l'ID change
 
   const fetchUnreadCounts = async (userId) => {
     const { data: userMsgs } = await supabase.from('messages').select('sender_id').eq('receiver_id', userId).eq('is_read', false);
@@ -827,9 +815,9 @@ const Chat = () => {
     group.name?.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  // Pendant la restauration de session (rechargement), on affiche un spinner
-  // pour éviter d'afficher faussement l'écran "non connecté"
-  if (loading) {
+  // Attendre que AuthContext ait terminé de restaurer la session
+  // (évite le flash "non connecté" sur PC lors du refresh de token)
+  if (authLoading) {
     return (
       <div className="main-content-wrapper">
         <div className="container text-center" style={{ paddingTop: '4rem', minHeight: '60vh', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1rem' }}>

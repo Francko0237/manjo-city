@@ -541,12 +541,18 @@ img {
   }
 }
 
-/* Sur tablette (769px - 1024px) : affichage deux colonnes côte à côte comme desktop */
-@media (min-width: 769px) and (max-width: 1024px) {
-  /* Réinitialise les overrides mobile pour le chat */
+
+/* Sur tablette (769px - 1279px) : layout chat optimisé sans LeftSidebar */
+@media (min-width: 769px) and (max-width: 1279px) {
+  /* Masque la LeftSidebar dans la page chat — trop étroit */
+  .chat-feed-layout > .feed-sidebar-left {
+    display: none !important;
+  }
+
+  /* Contacts sidebar plus étroite pour laisser de la place */
   .chat-sidebar-wrapper {
-    max-width: 280px !important;
-    width: 280px !important;
+    max-width: 240px !important;
+    width: 240px !important;
     flex-shrink: 0 !important;
     display: flex !important;
   }
@@ -562,6 +568,8 @@ img {
     height: auto !important;
     width: auto !important;
     z-index: auto !important;
+    flex: 1 !important;
+    min-width: 0 !important;
   }
 
   .chat-main-window.mobile-fullscreen {
@@ -570,7 +578,14 @@ img {
     width: auto !important;
     z-index: auto !important;
   }
+
+  /* Le conteneur flex prend toute la largeur */
+  .chat-feed-layout {
+    padding: 0 !important;
+  }
 }
+
+
 
 /* Glassmorphic Back Button for Hero Sections */
 .btn-back-hero {
@@ -628,7 +643,7 @@ img {
   min-width: 0;
 }
 
-@media (min-width: 1024px) {
+@media (min-width: 1280px) {
   .feed-sidebar-left {
     display: block;
   }
