@@ -878,7 +878,7 @@ const Chat = () => {
           <LeftSidebar />
 
           {/* ── CHAT LAYOUT ── */}
-          <div style={{ flex: 1, minWidth: 0, display: 'flex', height: 'calc(100dvh - 116px)' }}>
+          <div style={{ flex: 1, minWidth: 0, display: 'flex', height: 'calc(100dvh - 116px)', overflow: 'hidden' }}>
 
             {/* ══════════════════════════════════
                 SIDEBAR — Liste des conversations
